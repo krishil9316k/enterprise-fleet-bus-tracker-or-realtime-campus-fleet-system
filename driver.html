@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Driver Fleet Panel - Secure Authentication</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; padding: 40px; background: #f0f2f5; }
+        .card { background: white; max-width: 400px; margin: auto; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        
+        #driverLoginBox input { width: 90%; padding: 12px; margin: 10px 0; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
+        #driverLoginBox button { width: 95%; padding: 12px; background: #28a745; color: white; border: none; font-weight: bold; border-radius: 4px; cursor: pointer; margin-top: 10px; }
+        
+        #driverPanelContent { display: none; }
+        select, button { width: 100%; padding: 12px; margin-top: 15px; font-size: 16px; border-radius: 6px; border: 1px solid #ccc; }
+        .btn-start { background: #28a745; color: white; border: none; font-weight: bold; cursor: pointer; }
+        .btn-sos { background: #dc3545; color: white; border: none; font-weight: bold; cursor: pointer; margin-top: 10px; }
+        .dispatch-banner { display: none; background: #fff3cd; color: #856404; padding: 12px; border: 1px solid #ffeeba; border-radius: 6px; margin-top: 15px; font-weight: bold; text-align: left; }
+        #status { margin-top: 20px; font-weight: bold; color: #555; word-break: break-all; }
+        .logout-btn { background: #6c757d !important; font-size: 13px !important; padding: 8px !important; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div id="driverLoginBox">
+            <h2>🚌 Driver Portal Login</h2>
+            <p style="color: #666; font-size: 13px;">Authenticate to broadcast telemetry</p>
+            <input type="email" id="driverEmail" placeholder="Driver Email" value="driver1@college.edu">
+            <input type="password" id="driverPassword" placeholder="Password">
+            <button id="driverLoginBtn">Driver Login</button>
+            <p id="driverLoginError" style="color: red; font-size: 13px; margin-top: 10px;"></p>
+        </div>
+
+        <div id="driverPanelContent">
+            <h2>Driver Control Panel</h2>
+            <label for="busIdSelect" style="display:block; text-align:left; font-weight:bold; margin-top:10px;">Select Your Bus:</label>
+            <select id="busIdSelect">
+                <option value="bus_101">Bus 101 (Route A)</option>
+                <option value="bus_102">Bus 102 (Route B)</option>
+                <option value="bus_103">Bus 103 (Route C)</option>
+            </select>
+
+            <button id="startBtn" class="btn-start">Start Trip & Broadcast GPS</button>
+            <button id="sosBtn" class="btn-sos">🚨 Trigger Emergency / SOS</button>
+            
+            <div id="dispatchBanner" class="dispatch-banner">
+                📬 <strong>Dispatch Note:</strong> <span id="adminText">None</span>
+            </div>
+
+            <p id="status">Status: Waiting to start...</p>
+            <button id="driverLogoutBtn" class="logout-btn">Logout Driver</button>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
+        import { getDatabase, ref, update, onValue } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
+        import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyA3dQYAnvGlHSFSbaGle26GOqR1o-Ezbz8",
+            authDomain: "collegebustracker-2010.firebaseapp.com",
+            projectId: "collegebustracker-2010",
+            storageBucket: "collegebustracker-2010.firebasestorage.app",
+            messagingSenderId: "201520274526",
+            appId: "1:201520274526:web:587bd45d1ce646a3df68cf"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+        const auth = getAuth(app);
+
+        const loginBox = document.getElementById('driverLoginBox');
+        const panelContent = document.getElementById('driverPanelContent');
+        let watchId = null;
+        let isEmergency = false;
+        let currentBusId = "bus_101";
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                loginBox.style.display = "none";
+                panelContent.style.display = "block";
+                listenToDispatch(currentBusId);
+            } else {
+                loginBox.style.display = "block";
+                panelContent.style.display = "none";
+            }
+        });
+
+        document.getElementById('driverLoginBtn').addEventListener('click', () => {
+            const email = document.getElementById('driverEmail').value;
+            const password = document.getElementById('driverPassword').value;
+            signInWithEmailAndPassword(auth, email, password).catch((error) => {
+                document.getElementById('driverLoginError').innerText = "Login Error: " + error.message;
+            });
+        });
+
+        document.getElementById('driverLogoutBtn').addEventListener('click', () => {
+            if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+            signOut(auth);
+        });
+
+        const busSelect = document.getElementById('busIdSelect');
+        function listenToDispatch(busId) {
+            onValue(ref(db, `fleet/${busId}`), (snapshot) => {
+                const data = snapshot.val();
+                if (data && data.adminMessage) {
+                    document.getElementById('dispatchBanner').style.display = "block";
+                    document.getElementById('adminText').innerText = data.adminMessage;
+                }
+            });
+        }
+
+        busSelect.addEventListener('change', (e) => {
+            currentBusId = e.target.value;
+            listenToDispatch(currentBusId);
+        });
+
+        document.getElementById('startBtn').addEventListener('click', () => {
+            currentBusId = busSelect.value;
+            const statusText = document.getElementById('status');
+            statusText.innerText = `Status: Initializing GPS for ${currentBusId}...`;
+
+            if (navigator.geolocation) {
+                if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+
+                watchId = navigator.geolocation.watchPosition(
+                    (position) => {
+                        const lat = position.coords.latitude;
+                        const lng = position.coords.longitude;
+                        const speed = position.coords.speed ? (position.coords.speed * 3.6).toFixed(1) : 0;
+
+                        update(ref(db, `fleet/${currentBusId}`), {
+                            busId: currentBusId,
+                            latitude: lat,
+                            longitude: lng,
+                            speed: speed,
+                            timestamp: Date.now(),
+                            status: isEmergency ? "EMERGENCY" : "Active"
+                        });
+
+                        statusText.innerHTML = `Broadcasting <b>${currentBusId}</b><br>Lat: ${lat.toFixed(4)}, Lng: ${lng.toFixed(4)}<br>Speed: ${speed} km/h`;
+                        statusText.style.color = isEmergency ? "red" : "green";
+                    },
+                    (error) => {
+                        statusText.innerText = "Error: Please allow location access.";
+                        statusText.style.color = "red";
+                    },
+                    { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 }
+                );
+            }
+        });
+
+        document.getElementById('sosBtn').addEventListener('click', () => {
+            currentBusId = busSelect.value;
+            isEmergency = !isEmergency;
+            
+            const sosBtn = document.getElementById('sosBtn');
+            sosBtn.style.background = isEmergency ? "#333" : "#dc3545";
+            sosBtn.innerText = isEmergency ? "Deactivate SOS / Normal" : "🚨 Trigger Emergency / SOS";
+
+            update(ref(db, `fleet/${currentBusId}`), {
+                status: isEmergency ? "EMERGENCY" : "Active"
+            });
+        });
+    </script>
+</body>
+</html>

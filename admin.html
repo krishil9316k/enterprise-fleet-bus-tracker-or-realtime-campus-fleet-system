@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Fleet Command Center - Route Deviation & Analytics</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; background: #f4f7f6; padding: 20px; }
+        header { background: #1e1e2f; color: white; padding: 20px; border-radius: 8px; text-align: center; margin-bottom: 20px; }
+        
+        #loginContainer { max-width: 400px; margin: 80px auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); text-align: center; }
+        #loginContainer input { width: 90%; padding: 12px; margin: 10px 0; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; }
+        #loginContainer button { width: 95%; padding: 12px; background: #003366; color: white; border: none; font-weight: bold; border-radius: 4px; cursor: pointer; margin-top: 10px; }
+        
+        #dashboardContent { display: none; }
+        table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 10px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        th, td { padding: 15px; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #003366; color: white; }
+        
+        .badge-active { background: #d4edda; color: #155724; padding: 5px 10px; border-radius: 12px; font-weight: bold; font-size: 12px; }
+        .badge-emergency { background: #dc3545; color: white; padding: 5px 10px; border-radius: 12px; font-weight: bold; font-size: 12px; animation: pulse 1s infinite; }
+        .badge-deviation { background: #ffc107; color: #856404; padding: 5px 10px; border-radius: 12px; font-weight: bold; font-size: 12px; }
+        
+        .grid-container { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
+        .card { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); }
+        
+        select, input, button { padding: 10px; font-size: 14px; border-radius: 4px; border: 1px solid #ccc; }
+        .btn-dispatch { background: #003366; color: white; border: none; font-weight: bold; cursor: pointer; }
+        .logout-btn { background: #dc3545 !important; float: right; margin-top: -10px; }
+        
+        .analytics-stat { font-size: 22px; font-weight: bold; color: #003366; margin: 5px 0; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
+    </style>
+</head>
+<body>
+
+    <!-- Secure Login Wall -->
+    <div id="loginContainer">
+        <h2>🔒 Admin Portal Login</h2>
+        <p style="color: #666; font-size: 13px;">Enter credentials to access geofence & telemetry</p>
+        <input type="email" id="adminEmail" placeholder="Admin Email" value="admin@college.edu">
+        <input type="password" id="adminPassword" placeholder="Password">
+        <button id="loginBtn">Secure Login</button>
+        <p id="loginError" style="color: red; font-size: 13px; margin-top: 10px;"></p>
+    </div>
+
+    <!-- Main Admin Dashboard (Protected) -->
+    <div id="dashboardContent">
+        <header>
+            <h2>Transport Department - Admin Fleet Command Center</h2>
+            <p>Real-Time Telemetry, Route Geofencing & Dispatch Hub 
+               <button id="logoutBtn" class="logout-btn" style="padding: 6px 12px; font-size: 12px; border: none; border-radius: 4px; color: white; cursor: pointer;">Logout</button>
+            </p>
+        </header>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Bus ID / Route</th>
+                    <th>Operational Status</th>
+                    <th>Current Latitude</th>
+                    <th>Current Longitude</th>
+                    <th>Speed</th>
+                    <th>Distance from Campus</th>
+                    <th>Last Ping Update</th>
+                </tr>
+            </thead>
+            <tbody id="fleetTableBody">
+                <tr><td colspan="7" style="text-align:center;">Authenticating data stream...</td></tr>
+            </tbody>
+        </table>
+
+        <div class="grid-container">
+            <!-- Dispatch Card -->
+            <div class="card">
+                <h3>📢 Live Driver Dispatch & Announcements</h3>
+                <div style="display: flex; gap: 10px; margin-top: 15px;">
+                    <select id="targetBus">
+                        <option value="bus_101">Bus 101</option>
+                        <option value="bus_102">Bus 102</option>
+                        <option value="bus_103">Bus 103</option>
+                    </select>
+                    <input type="text" id="dispatchMsg" placeholder="Type message for driver..." style="flex-grow: 1;">
+                    <button id="sendDispatchBtn" class="btn-dispatch">Send</button>
+                </div>
+                <span id="dispatchStatus" style="font-weight:bold; color:green; display:block; margin-top:10px;"></span>
+            </div>
+
+            <!-- Trip Analytics & Summary Log -->
+            <div class="card">
+                <h3>📊 Live Fleet Analytics</h3>
+                <p style="margin: 5px 0; color: #666; font-size: 13px;">Active Session Peak Metrics</p>
+                <div style="display: flex; justify-content: space-between; margin-top: 15px;">
+                    <div>
+                        <span style="font-size:12px; color:#555;">PEAK FLEET SPEED</span>
+                        <div id="peakSpeedStat" class="analytics-stat">0.0 km/h</div>
+                    </div>
+                    <div>
+                        <span style="font-size:12px; color:#555;">ACTIVE BUSES</span>
+                        <div id="activeCountStat" class="analytics-stat">0</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
+        import { getDatabase, ref, onValue, update } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
+        import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyA3dQYAnvGlHSFSbaGle26GOqR1o-Ezbz8",
+            authDomain: "collegebustracker-2010.firebaseapp.com",
+            projectId: "collegebustracker-2010",
+            storageBucket: "collegebustracker-2010.firebasestorage.app",
+            messagingSenderId: "201520274526",
+            appId: "1:201520274526:web:587bd45d1ce646a3df68cf"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+        const auth = getAuth(app);
+
+        // Mock Campus Destination Coordinates for Geofencing Boundary Check
+        const campusCoord = { lat: 23.0225, lng: 72.5714 };
+
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371; 
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                      Math.sin(dLon/2) * Math.sin(dLon/2);
+            return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
+        }
+
+        const loginContainer = document.getElementById('loginContainer');
+        const dashboardContent = document.getElementById('dashboardContent');
+        const tableBody = document.getElementById('fleetTableBody');
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                loginContainer.style.display = "none";
+                dashboardContent.style.display = "block";
+                loadFleetData();
+            } else {
+                loginContainer.style.display = "block";
+                dashboardContent.style.display = "none";
+            }
+        });
+
+        document.getElementById('loginBtn').addEventListener('click', () => {
+            const email = document.getElementById('adminEmail').value;
+            const password = document.getElementById('adminPassword').value;
+            signInWithEmailAndPassword(auth, email, password).catch((error) => {
+                document.getElementById('loginError').innerText = "Login Failed: " + error.message;
+            });
+        });
+
+        document.getElementById('logoutBtn').addEventListener('click', () => signOut(auth));
+
+        function loadFleetData() {
+            onValue(ref(db, 'fleet'), (snapshot) => {
+                const data = snapshot.val();
+                if (data) {
+                    tableBody.innerHTML = ""; 
+                    let maxSpeed = 0;
+                    let activeBuses = 0;
+
+                    Object.keys(data).forEach((busKey) => {
+                        const bus = data[busKey];
+                        activeBuses++;
+                        const speedNum = parseFloat(bus.speed) || 0;
+                        if (speedNum > maxSpeed) maxSpeed = speedNum;
+
+                        const timeFormatted = new Date(bus.timestamp).toLocaleTimeString();
+                        
+                        // Geofence boundary check: if bus is > 15 km away, flag as Route Deviation warning
+                        const distanceKm = calculateDistance(bus.latitude, bus.longitude, campusCoord.lat, campusCoord.lng);
+                        
+                        let statusBadge = `<span class="badge-active">Active</span>`;
+                        let rowStyle = '';
+
+                        if (bus.status === "EMERGENCY") {
+                            statusBadge = `<span class="badge-emergency">⚠️ EMERGENCY</span>`;
+                            rowStyle = 'style="background-color: #fff3f3;"';
+                        } else if (distanceKm > 15.0) {
+                            statusBadge = `<span class="badge-deviation">⚠️ DEVIATION (>15km)</span>`;
+                            rowStyle = 'style="background-color: #fff9e6;"';
+                        }
+
+                        tableBody.innerHTML += `
+                            <tr ${rowStyle}>
+                                <td><strong>${bus.busId}</strong></td>
+                                <td>${statusBadge}</td>
+                                <td>${bus.latitude.toFixed(5)}</td>
+                                <td>${bus.longitude.toFixed(5)}</td>
+                                <td>${speedNum} km/h</td>
+                                <td>${distanceKm.toFixed(1)} km</td>
+                                <td>${timeFormatted}</td>
+                            </tr>`;
+                    });
+
+                    document.getElementById('peakSpeedStat').innerText = `${maxSpeed} km/h`;
+                    document.getElementById('activeCountStat').innerText = activeBuses;
+                } else {
+                    tableBody.innerHTML = `<tr><td colspan="7" style="text-align:center; color:red;">No active buses.</td></tr>`;
+                    document.getElementById('peakSpeedStat').innerText = "0.0 km/h";
+                    document.getElementById('activeCountStat').innerText = "0";
+                }
+            });
+        }
+
+        document.getElementById('sendDispatchBtn').addEventListener('click', () => {
+            const busId = document.getElementById('targetBus').value;
+            const message = document.getElementById('dispatchMsg').value;
+            const statusSpan = document.getElementById('dispatchStatus');
+
+            if (!message) { alert("Please enter a message."); return; }
+
+            update(ref(db, `fleet/${busId}`), { adminMessage: message, messageTime: Date.now() }).then(() => {
+                statusSpan.innerText = `✓ Message sent successfully!`;
+                setTimeout(() => statusSpan.innerText = "", 3000);
+                document.getElementById('dispatchMsg').value = "";
+            });
+        });
+    </script>
+</body>
+</html>

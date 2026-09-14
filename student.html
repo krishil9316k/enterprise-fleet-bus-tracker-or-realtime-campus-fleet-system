@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Student Dashboard - Fleet Tracker, Trail & Geofencing</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; display: flex; flex-direction: column; height: 100vh; }
+        header { background: #003366; color: white; padding: 15px; display: flex; justify-content: space-between; align-items: center; }
+        .controls { background: #f8f9fa; padding: 10px 20px; display: flex; gap: 15px; align-items: center; border-bottom: 1px solid #ddd; }
+        select { padding: 8px 12px; font-size: 15px; border-radius: 4px; border: 1px solid #ccc; }
+        #map { flex-grow: 1; width: 100%; }
+        #status { font-weight: bold; color: #333; }
+        .eta-badge { background: #e3f2fd; color: #0d47a1; padding: 6px 12px; border-radius: 20px; font-weight: bold; border: 1px solid #90caf9; }
+        .alert-banner { display: none; background: #dc3545; color: white; text-align: center; padding: 10px; font-weight: bold; font-size: 16px; animation: pulse 1s infinite; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h2>Student Fleet Dashboard</h2>
+        <div id="etaDisplay" class="eta-badge">Select a bus to calculate ETA</div>
+    </header>
+
+    <div id="emergencyAlert" class="alert-banner">⚠️ EMERGENCY ALERT: The selected bus has reported an emergency situation!</div>
+
+    <div class="controls">
+        <label for="trackBusSelect"><strong>Choose Bus to Track:</strong></label>
+        <select id="trackBusSelect">
+            <option value="">-- Select Bus --</option>
+            <option value="bus_101">Bus 101 (Route A)</option>
+            <option value="bus_102">Bus 102 (Route B)</option>
+            <option value="bus_103">Bus 103 (Route C)</option>
+        </select>
+        <span id="status">Waiting for selection...</span>
+    </div>
+
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
+        import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyA3dQYAnvGlHSFSbaGle26GOqR1o-Ezbz8",
+            authDomain: "collegebustracker-2010.firebaseapp.com",
+            projectId: "collegebustracker-2010",
+            storageBucket: "collegebustracker-2010.firebasestorage.app",
+            messagingSenderId: "201520274526",
+            appId: "1:201520274526:web:587bd45d1ce646a3df68cf"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+
+        const campusCoord = { lat: 23.0225, lng: 72.5714 }; 
+
+        const map = L.map('map').setView([20.5937, 78.9629], 5);
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
+            maxZoom: 19,
+            attribution: 'Tiles © Esri'
+        }).addTo(map);
+
+        L.marker([campusCoord.lat, campusCoord.lng]).addTo(map)
+            .bindPopup("<b>College Campus Destination</b>");
+
+        let busMarker = null;
+        let routeCoordinates = [];
+        let polyline = L.polyline([], { color: '#007bff', weight: 4 }).addTo(map);
+        let dbRef = null;
+
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371; 
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                      Math.sin(dLon/2) * Math.sin(dLon/2);
+            return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
+        }
+
+        document.getElementById('trackBusSelect').addEventListener('change', (e) => {
+            const selectedBus = e.target.value;
+            const statusEl = document.getElementById('status');
+            const etaEl = document.getElementById('etaDisplay');
+            const alertBanner = document.getElementById('emergencyAlert');
+
+            if (!selectedBus) {
+                statusEl.innerText = "Please select a bus.";
+                etaEl.innerText = "Select a bus to calculate ETA";
+                alertBanner.style.display = "none";
+                return;
+            }
+
+            statusEl.innerText = `Connecting to ${selectedBus}...`;
+            routeCoordinates = []; 
+            polyline.setLatLngs([]);
+
+            dbRef = ref(db, `fleet/${selectedBus}`);
+            onValue(dbRef, (snapshot) => {
+                const data = snapshot.val();
+                
+                if (data) {
+                    const lat = data.latitude;
+                    const lng = data.longitude;
+                    const speed = data.speed || 30; 
+
+                    if (data.status === "EMERGENCY") {
+                        alertBanner.style.display = "block";
+                        statusEl.innerText = "⚠️ EMERGENCY STATUS ACTIVE!";
+                        statusEl.style.color = "red";
+                    } else {
+                        alertBanner.style.display = "none";
+                        statusEl.innerText = `${selectedBus} is live! Speed: ${speed} km/h`;
+                        statusEl.style.color = "green";
+                    }
+
+                    const distanceKm = calculateDistance(lat, lng, campusCoord.lat, campusCoord.lng);
+                    const timeMinutes = Math.round((distanceKm / Math.max(speed, 10)) * 60);
+
+                    if (distanceKm <= 2.0) {
+                        etaEl.innerText = `🚨 ARRIVING SOON! ~${timeMinutes} mins (${distanceKm.toFixed(1)} km away)`;
+                    } else {
+                        etaEl.innerText = `Estimated Arrival: ~${timeMinutes} mins (${distanceKm.toFixed(1)} km away)`;
+                    }
+
+                    routeCoordinates.push([lat, lng]);
+                    polyline.setLatLngs(routeCoordinates);
+
+                    if (!busMarker) {
+                        busMarker = L.marker([lat, lng]).addTo(map);
+                        map.setView([lat, lng], 14);
+                    } else {
+                        busMarker.setLatLng([lat, lng]);
+                        map.panTo([lat, lng]);
+                    }
+                } else {
+                    statusEl.innerText = `${selectedBus} is currently offline.`;
+                    statusEl.style.color = "orange";
+                    etaEl.innerText = "Bus offline";
+                    alertBanner.style.display = "none";
+                }
+            });
+        });
+    </script>
+</body>
+</html>
